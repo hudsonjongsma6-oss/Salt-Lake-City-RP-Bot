@@ -1,0 +1,37 @@
+# Environment variables
+.env
+.env.bot2
+.env.liberty
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VSCode (only extensions and config)
+.vscode/extensions/
+.vscode/argv.json
+
+# Local scripts
+start_bot.ps1
+start_both_bots.ps1
+restart_modmail.ps1
+check_unban_user.py
+
+# Keep data directory but track files
+# data/ files should be uploaded for initial state
+
+# Data files (don't upload user data to GitHub)
+data/*.json
+
+# Old/backup files
+bot_liberty.py
+bot_liberty_new.py
