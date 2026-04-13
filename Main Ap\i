@@ -1,0 +1,294 @@
+import os
+import json
+import discord
+from discord.ext import commands
+from dotenv import load_dotenv
+
+
+ENV_PATH = os.path.join(os.path.dirname(__file__), ".env.fresh")
+load_dotenv(dotenv_path=ENV_PATH, override=True)
+
+TOKEN = os.getenv("NEW_BOT_TOKEN")
+PREFIX = os.getenv("NEW_BOT_PREFIX", "!")
+STATUS_TEXT = os.getenv("NEW_BOT_STATUS", "Managing the server")
+
+if not os.path.exists(ENV_PATH):
+    print("Missing .env.fresh file for this bot.")
+    raise SystemExit(1)
+
+if not TOKEN:
+    print("Missing NEW_BOT_TOKEN in environment variables.")
+    raise SystemExit(1)
+
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
+bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
+
+BASE_ROLE_ID = 1493343098296598538
+
+ROLE_SAVE_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "data", "saved_roles_fresh.json")
+)
+
+
+def load_saved_roles() -> dict:
+    if not os.path.exists(ROLE_SAVE_PATH):
+        return {}
+
+    try:
+        with open(ROLE_SAVE_PATH, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_saved_roles(data: dict) -> None:
+    os.makedirs(os.path.dirname(ROLE_SAVE_PATH), exist_ok=True)
+    temp_path = ROLE_SAVE_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2)
+    os.replace(temp_path, ROLE_SAVE_PATH)
+
+
+@bot.event
+async def on_ready() -> None:
+    await bot.change_presence(activity=discord.Game(name=STATUS_TEXT))
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"Prefix: {PREFIX}")
+
+
+@bot.command(name="help")
+async def help_command(ctx: commands.Context) -> None:
+    embed = discord.Embed(
+        title="Fresh Standalone Bot Commands",
+        color=discord.Color.blurple(),
+        description=f"Use `{PREFIX}<command>`",
+    )
+    embed.add_field(name="ping", value="Check latency", inline=False)
+    embed.add_field(name="say <message>", value="Make bot repeat a message", inline=False)
+    embed.add_field(name="purge <amount>", value="Delete recent messages (Manage Messages)", inline=False)
+    embed.add_field(name="kick <@user> [reason]", value="Kick a member (Kick Members)", inline=False)
+    embed.add_field(name="ban <@user> [reason]", value="Ban a member (Ban Members)", inline=False)
+    embed.add_field(name="unban <user_id> [reason]", value="Unban by user ID (Ban Members)", inline=False)
+    embed.add_field(name="announce <message>", value="Post a highlighted announcement (Manage Guild)", inline=False)
+    embed.add_field(
+        name="nrs <@user>",
+        value="Save and remove target user roles above base role ID 1493343098296598538",
+        inline=False,
+    )
+    embed.add_field(name="gar <@user>", value="Give target user their saved roles back (Manage Roles)", inline=False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="ping")
+async def ping(ctx: commands.Context) -> None:
+    await ctx.send(f"Pong! `{round(bot.latency * 1000)}ms`")
+
+
+@bot.command(name="say")
+@commands.has_permissions(manage_messages=True)
+async def say(ctx: commands.Context, *, message: str) -> None:
+    await ctx.message.delete()
+    await ctx.send(message)
+
+
+@bot.command(name="purge")
+@commands.has_permissions(manage_messages=True)
+async def purge(ctx: commands.Context, amount: int) -> None:
+    if amount < 1 or amount > 100:
+        await ctx.send("Please choose an amount from 1 to 100.")
+        return
+
+    deleted = await ctx.channel.purge(limit=amount + 1)
+    msg = await ctx.send(f"Deleted {max(len(deleted) - 1, 0)} messages.")
+    await msg.delete(delay=4)
+
+
+@bot.command(name="kick")
+@commands.has_permissions(kick_members=True)
+async def kick(
+    ctx: commands.Context,
+    member: discord.Member,
+    *,
+    reason: str = "No reason provided",
+) -> None:
+    await member.kick(reason=reason)
+    await ctx.send(f"Kicked {member.mention}. Reason: {reason}")
+
+
+@bot.command(name="ban")
+@commands.has_permissions(ban_members=True)
+async def ban(
+    ctx: commands.Context,
+    member: discord.Member,
+    *,
+    reason: str = "No reason provided",
+) -> None:
+    await member.ban(reason=reason)
+    await ctx.send(f"Banned {member.mention}. Reason: {reason}")
+
+
+@bot.command(name="unban")
+@commands.has_permissions(ban_members=True)
+async def unban(
+    ctx: commands.Context,
+    user_id: int,
+    *,
+    reason: str = "No reason provided",
+) -> None:
+    user = await bot.fetch_user(user_id)
+    await ctx.guild.unban(user, reason=reason)
+    await ctx.send(f"Unbanned {user}. Reason: {reason}")
+
+
+@bot.command(name="announce")
+@commands.has_permissions(manage_guild=True)
+async def announce(ctx: commands.Context, *, message: str) -> None:
+    embed = discord.Embed(
+        title="Server Announcement",
+        description=message,
+        color=discord.Color.gold(),
+    )
+    embed.set_footer(text=f"Posted by {ctx.author}")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="setstatus")
+@commands.has_permissions(administrator=True)
+async def setstatus(ctx: commands.Context, *, text: str) -> None:
+    await bot.change_presence(activity=discord.Game(name=text))
+    await ctx.send(f"Status updated to: `{text}`")
+
+
+@bot.command(name="nrs")
+@commands.has_permissions(manage_roles=True)
+async def nrs(ctx: commands.Context, member: discord.Member) -> None:
+    if not isinstance(ctx.author, discord.Member) or ctx.guild is None:
+        await ctx.send("This command can only be used in a server.")
+        return
+
+    base_role = ctx.guild.get_role(BASE_ROLE_ID)
+    if base_role is None:
+        await ctx.send(f"Base role `{BASE_ROLE_ID}` was not found in this server.")
+        return
+
+    roles_to_save = [
+        role.id
+        for role in member.roles
+        if role != ctx.guild.default_role and role.position > base_role.position
+    ]
+    if not roles_to_save:
+        await ctx.send("That user has no roles above the configured base role.")
+        return
+
+    data = load_saved_roles()
+    guild_data = data.setdefault(str(ctx.guild.id), {})
+    guild_data[str(member.id)] = roles_to_save
+    save_saved_roles(data)
+
+    bot_member = ctx.guild.get_member(bot.user.id) if bot.user else None
+    if bot_member is None:
+        await ctx.send("I could not verify my server role hierarchy.")
+        return
+
+    removable_roles = [
+        role
+        for role in member.roles
+        if role != ctx.guild.default_role
+        and not role.managed
+        and role.position > base_role.position
+        and role < bot_member.top_role
+    ]
+
+    if not removable_roles:
+        await ctx.send("Roles were saved, but I could not remove any due to role hierarchy.")
+        return
+
+    await member.remove_roles(*removable_roles, reason=f"nrs used by {ctx.author}")
+    result_embed = discord.Embed(
+        title="NRS Complete",
+        description=(
+            f"Saved **{len(roles_to_save)}** role(s) above **{base_role.name}**\n"
+            f"Removed **{len(removable_roles)}** role(s) from {member.mention}"
+        ),
+        color=discord.Color.green(),
+    )
+    result_embed.set_footer(text=f"Requested by {ctx.author}")
+    await ctx.send(embed=result_embed)
+
+
+@bot.command(name="gar")
+@commands.has_permissions(manage_roles=True)
+async def gar(ctx: commands.Context, member: discord.Member) -> None:
+    if ctx.guild is None:
+        await ctx.send("This command can only be used in a server.")
+        return
+
+    data = load_saved_roles()
+    guild_data = data.get(str(ctx.guild.id), {})
+    saved_role_ids = guild_data.get(str(member.id), [])
+    if not saved_role_ids:
+        await ctx.send("No saved roles were found for that user.")
+        return
+
+    bot_member = ctx.guild.get_member(bot.user.id) if bot.user else None
+    if bot_member is None:
+        await ctx.send("I could not verify my server role hierarchy.")
+        return
+
+    addable_roles = []
+    for role_id in saved_role_ids:
+        role = ctx.guild.get_role(role_id)
+        if role is None:
+            continue
+        if role.managed:
+            continue
+        if role >= bot_member.top_role:
+            continue
+        if role in member.roles:
+            continue
+        addable_roles.append(role)
+
+    if not addable_roles:
+        await ctx.send("I could not add any saved roles (missing roles or role hierarchy issue).")
+        return
+
+    await member.add_roles(*addable_roles, reason=f"gar used by {ctx.author}")
+    result_embed = discord.Embed(
+        title="GAR Complete",
+        description=f"Restored **{len(addable_roles)}** saved role(s) to {member.mention}.",
+        color=discord.Color.green(),
+    )
+    result_embed.set_footer(text=f"Requested by {ctx.author}")
+    await ctx.send(embed=result_embed)
+
+
+@bot.event
+async def on_command_error(ctx: commands.Context, error: Exception) -> None:
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Missing required argument. Use the help command for usage.")
+        return
+
+    if isinstance(error, commands.BadArgument):
+        await ctx.send("Invalid argument type.")
+        return
+
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("You do not have permission to use that command.")
+        return
+
+    if isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("I am missing permissions required for that command.")
+        return
+
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    await ctx.send("Something went wrong while running that command.")
+    print(f"Command error: {error}")
+
+
+bot.run(TOKEN) 
