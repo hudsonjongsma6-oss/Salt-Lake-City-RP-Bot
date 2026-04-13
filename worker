@@ -1,0 +1,1 @@
+worker: python cli/bot_liberty_final.py
